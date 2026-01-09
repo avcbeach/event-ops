@@ -1,3 +1,4 @@
+import calendar
 import pandas as pd
 import streamlit as st
 from datetime import date, datetime, timedelta
@@ -20,12 +21,77 @@ EVENT_COLS = ["event_id","event_name","location","start_date","end_date","status
 TASK_COLS  = ["task_id","scope","event_id","task_name","due_date","owner","status","priority","category","notes"]
 
 # --------------------------------------------------
+# CSS: COMPACT MONTH GRID (NO BIG EMPTY BOXES)
+# --------------------------------------------------
+st.markdown("""
+<style>
+/* Month cell container: minimal padding, NO fixed height */
+.day {
+  padding: 6px 6px 8px 6px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #fff;
+}
+
+/* Empty day: looks lighter, still aligned */
+.day.empty {
+  background: #fafafa;
+  border-style: dashed;
+  opacity: 0.85;
+}
+
+/* Outside-month day */
+.day.off {
+  background: #ffffff;
+  border: none;
+  padding: 6px;
+  opacity: 0.35;
+}
+
+.daynum button {
+  width: 100%;
+  padding: 2px 6px;
+  border-radius: 8px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+/* Small counter row */
+.counters {
+  margin-top: 6px;
+  font-size: 12px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* Badges */
+.badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 999px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+/* Legend colors */
+.b-ev { background:#e8f1ff; color:#1e40af; }     /* planned/upcoming event */
+.b-on { background:#e9f7ef; color:#065f46; }     /* ongoing event */
+.b-tk { background:#fef3c7; color:#92400e; }     /* tasks due */
+.b-od { background:#fee2e2; color:#991b1b; }     /* overdue tasks */
+
+.small-note { color:#6b7280; font-size:12px; }
+</style>
+""", unsafe_allow_html=True)
+
+# --------------------------------------------------
 # HELPERS
 # --------------------------------------------------
 def parse_date(s):
     try:
         return datetime.strptime(str(s), "%Y-%m-%d").date()
-    except:
+    except Exception:
         return None
 
 def overlaps(d, s, e):
@@ -39,112 +105,183 @@ def open_task(tid):
     st.session_state["selected_task_id"] = tid
     st.switch_page("pages/3_Tasks.py")
 
+def popover_or_expander(label):
+    return st.popover(label) if hasattr(st, "popover") else st.expander(label)
+
 # --------------------------------------------------
 # LOAD DATA
 # --------------------------------------------------
 events = read_csv("data/events.csv", EVENT_COLS)
 tasks  = read_csv("data/tasks.csv", TASK_COLS)
-
 today = date.today()
 
+# normalize scope
+tasks["scope"] = tasks["scope"].astype(str).fillna("")
+blank = tasks["scope"].str.strip().eq("")
+tasks.loc[blank & tasks["event_id"].astype(str).str.strip().ne(""), "scope"] = "Event"
+tasks.loc[blank & tasks["event_id"].astype(str).str.strip().eq(""), "scope"] = "General"
+
+# parse dates
 events["start"] = events["start_date"].apply(parse_date)
 events["end"]   = events["end_date"].apply(parse_date)
 tasks["due"]    = tasks["due_date"].apply(parse_date)
 
-tasks["scope"] = tasks["scope"].astype(str).fillna("")
-tasks.loc[tasks["scope"].eq(""), "scope"] = "General"
+# merge event names into tasks
+tasks = tasks.merge(events[["event_id","event_name"]], on="event_id", how="left")
+tasks["event_name"] = tasks["event_name"].fillna("")
 
 # --------------------------------------------------
 # SUMMARY
 # --------------------------------------------------
 ongoing = events[(events["start"] <= today) & (events["end"] >= today)]
-upcoming = events[(events["start"] > today)]
-overdue = tasks[(tasks["due"] < today) & (tasks["status"]!="Done")]
+upcoming_14 = events[(events["start"] > today) & (events["start"] <= today + timedelta(days=14))]
+overdue = tasks[(tasks["due"].notna()) & (tasks["due"] < today) & (tasks["status"].astype(str).str.lower() != "done")]
 
 c1,c2,c3,c4 = st.columns(4)
 c1.metric("Total events", len(events))
 c2.metric("Ongoing", len(ongoing))
-c3.metric("Upcoming", len(upcoming))
+c3.metric("Upcoming (14 days)", len(upcoming_14))
 c4.metric("Overdue tasks", len(overdue))
 
 st.divider()
 
 # --------------------------------------------------
-# LEGEND (EXPLAIN COLORS CLEARLY)
+# LEGEND (ON PAGE, CLEAR)
 # --------------------------------------------------
-st.subheader("Legend")
-
+st.subheader("Legend (colors)")
 l1,l2,l3,l4 = st.columns(4)
-l1.markdown("🟦 **Event (planned / upcoming)**")
-l2.markdown("🟩 **Event (ongoing)**")
-l3.markdown("🟨 **Task due**")
-l4.markdown("🔴 **Overdue task**")
+l1.markdown("🟦 <span class='badge b-ev'>Event (planned / upcoming)</span>", unsafe_allow_html=True)
+l2.markdown("🟩 <span class='badge b-on'>Event (ongoing)</span>", unsafe_allow_html=True)
+l3.markdown("🟨 <span class='badge b-tk'>Tasks due</span>", unsafe_allow_html=True)
+l4.markdown("🔴 <span class='badge b-od'>Overdue tasks</span>", unsafe_allow_html=True)
+
+st.markdown("<div class='small-note'>Month view shows counts only. Click a day number to see full agenda below. Click an item in agenda to open its page.</div>", unsafe_allow_html=True)
 
 st.divider()
 
 # --------------------------------------------------
-# DATE SELECTOR
+# MONTH CONTROLS
 # --------------------------------------------------
-st.subheader("📅 Select date")
-selected_date = st.date_input(
-    "Choose a date to view agenda",
-    value=st.session_state.get("agenda_date", today),
-)
+st.subheader("🗓️ Month view")
 
-st.session_state["agenda_date"] = selected_date
+m1,m2 = st.columns([2,2])
+with m1:
+    year = st.number_input("Year", 2000, 2100, value=today.year, step=1)
+with m2:
+    month = st.selectbox("Month", list(range(1,13)), index=today.month-1)
+
+cal = calendar.Calendar(firstweekday=0)  # Monday start
+weeks = cal.monthdatescalendar(int(year), int(month))
+
+def events_for_day(d):
+    if events.empty:
+        return events.iloc[0:0]
+    mask = events.apply(lambda r: overlaps(d, r["start"], r["end"]), axis=1)
+    return events[mask].copy()
+
+def tasks_for_day(d):
+    if tasks.empty:
+        return tasks.iloc[0:0]
+    return tasks[tasks["due"] == d].copy()
+
+# header row
+dow = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
+hdr = st.columns(7)
+for i, name in enumerate(dow):
+    hdr[i].markdown(f"**{name}**")
 
 # --------------------------------------------------
-# AGENDA (MAIN CONTENT)
+# MONTH GRID (COMPACT, NO EMPTY BIG BOX)
 # --------------------------------------------------
-st.subheader(f"📌 Agenda — {selected_date}")
+for week in weeks:
+    cols = st.columns(7, gap="small")
+    for i, d in enumerate(week):
+        with cols[i]:
+            if d.month != month:
+                st.markdown(f"<div class='day off'>{d.day}</div>", unsafe_allow_html=True)
+                continue
 
-# EVENTS
+            ev = events_for_day(d)
+            td = tasks_for_day(d)
+
+            # counts
+            ev_ongoing = ev[ev["status"].astype(str).str.lower() == "ongoing"]
+            ev_other = ev[ev["status"].astype(str).str.lower() != "ongoing"]
+
+            td_over = td[(td["status"].astype(str).str.lower() != "done") & (td["due"].notna()) & (td["due"] < today)]
+            td_due = td  # all tasks due this day
+
+            is_empty = (len(ev) == 0 and len(td) == 0)
+
+            st.markdown(f"<div class='day {'empty' if is_empty else ''}'>", unsafe_allow_html=True)
+
+            # day number (click -> agenda)
+            st.markdown("<div class='daynum'>", unsafe_allow_html=True)
+            if st.button(f"{d.day}{' ⭐' if d == today else ''}", key=f"day_{d.isoformat()}"):
+                st.session_state["agenda_date"] = d.isoformat()
+            st.markdown("</div>", unsafe_allow_html=True)
+
+            # show compact counters only if there is info
+            if not is_empty:
+                parts = []
+                if len(ev_other) > 0:
+                    parts.append(f"<span class='badge b-ev'>🟦 E {len(ev_other)}</span>")
+                if len(ev_ongoing) > 0:
+                    parts.append(f"<span class='badge b-on'>🟩 E {len(ev_ongoing)}</span>")
+                if len(td_due) > 0:
+                    parts.append(f"<span class='badge b-tk'>🟨 T {len(td_due)}</span>")
+                if len(td_over) > 0:
+                    parts.append(f"<span class='badge b-od'>🔴 {len(td_over)}</span>")
+
+                st.markdown("<div class='counters'>" + "".join(parts) + "</div>", unsafe_allow_html=True)
+
+            st.markdown("</div>", unsafe_allow_html=True)
+
+st.divider()
+
+# --------------------------------------------------
+# AGENDA (DETAILS LIVE HERE)
+# --------------------------------------------------
+st.subheader("📌 Day agenda")
+
+agenda_iso = st.session_state.get("agenda_date")
+agenda_day = parse_date(agenda_iso) if agenda_iso else None
+if not agenda_day:
+    agenda_day = today
+    st.session_state["agenda_date"] = today.isoformat()
+
+st.write(f"Selected date: **{agenda_day.isoformat()}**")
+
+# Events for day
 st.markdown("### 🏐 Events")
-ev = events[events.apply(lambda r: overlaps(selected_date, r["start"], r["end"]), axis=1)]
-
+ev = events_for_day(agenda_day).copy()
 if ev.empty:
-    st.info("No events on this day.")
+    st.info("No events.")
 else:
+    # sort: ongoing first, then start date/name
+    ev["is_ongoing"] = (ev["status"].astype(str).str.lower() == "ongoing").astype(int)
+    ev = ev.sort_values(["is_ongoing","start_date","event_name"], ascending=[False, True, True])
+
     for _, r in ev.iterrows():
-        icon = "🟩" if r["status"].lower()=="ongoing" else "🟦"
-        if st.button(f"{icon} {r['event_name']} ({r['location']})", key=f"ev_{r['event_id']}"):
+        icon = "🟩" if str(r["status"]).lower() == "ongoing" else "🟦"
+        line = f"{icon} {r['event_name']} — {r['location']} ({r['start_date']} → {r['end_date']})"
+        if st.button(line, key=f"ag_ev_{agenda_day.isoformat()}_{r['event_id']}"):
             open_event(r["event_id"])
 
-# TASKS
-st.markdown("### 📝 Tasks")
-td = tasks[tasks["due"] == selected_date]
-
+# Tasks due that day
+st.markdown("### 📝 Tasks due")
+td = tasks_for_day(agenda_day).copy()
 if td.empty:
-    st.info("No tasks due on this day.")
+    st.info("No tasks.")
 else:
+    td["is_over"] = ((td["status"].astype(str).str.lower() != "done") & (td["due"].notna()) & (td["due"] < today)).astype(int)
+    td = td.sort_values(["is_over","scope","event_name","task_name"], ascending=[False, True, True, True])
+
     for _, r in td.iterrows():
-        icon = "🔴" if (r["status"]!="Done" and r["due"] < today) else "🟨"
-        if st.button(f"{icon} {r['task_name']}", key=f"tk_{r['task_id']}"):
+        overdue_icon = "🔴" if r["is_over"] == 1 else "🟨"
+        scope = "General" if str(r["scope"]).lower() == "general" else (r["event_name"] or "Event")
+        owner = f" — {r['owner']}" if str(r["owner"]).strip() else ""
+        status = f" [{r['status']}]" if str(r["status"]).strip() else ""
+        line = f"{overdue_icon} {r['task_name']} — {scope}{owner}{status}"
+        if st.button(line, key=f"ag_tk_{agenda_day.isoformat()}_{r['task_id']}"):
             open_task(r["task_id"])
-
-# --------------------------------------------------
-# UPCOMING / OVERDUE QUICK VIEW
-# --------------------------------------------------
-st.divider()
-st.subheader("⚠️ Attention")
-
-c1,c2 = st.columns(2)
-
-with c1:
-    st.markdown("### 🔴 Overdue tasks")
-    if overdue.empty:
-        st.info("No overdue tasks.")
-    else:
-        for _, r in overdue.iterrows():
-            if st.button(f"🔴 {r['task_name']} (due {r['due_date']})", key=f"od_{r['task_id']}"):
-                open_task(r["task_id"])
-
-with c2:
-    st.markdown("### ⏭️ Next 7 days")
-    soon = tasks[(tasks["due"] >= today) & (tasks["due"] <= today + timedelta(days=7))]
-    if soon.empty:
-        st.info("No tasks in next 7 days.")
-    else:
-        for _, r in soon.iterrows():
-            if st.button(f"🟨 {r['task_name']} ({r['due_date']})", key=f"nx_{r['task_id']}"):
-                open_task(r["task_id"])
