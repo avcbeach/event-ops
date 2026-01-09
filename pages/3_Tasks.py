@@ -86,6 +86,74 @@ if q.strip():
     ]
 
 # --------------------------------------------------
+# TASK DETAILS BLOCK (UNDER TABLE)
+# --------------------------------------------------
+st.divider()
+st.subheader("Task details")
+
+current_id = st.session_state.get("current_task_id")
+
+if not current_id or tasks.empty:
+    st.info("Select a task to view details.")
+else:
+    row = tasks[tasks["task_id"].astype(str) == str(current_id)]
+    if row.empty:
+        st.info("Selected task not found.")
+    else:
+        t = row.iloc[0]
+
+        # display card-like block
+        left, right = st.columns([3,2])
+
+        with left:
+            st.markdown(f"### 📝 {t['task_name']}")
+            st.write(f"**Task ID:** {t['task_id']}")
+            st.write(f"**Scope:** {t['scope']}")
+
+            if str(t["event_id"]).strip():
+                st.write(f"**Event:** {t['event_name']}  \n**Event ID:** {t['event_id']}")
+                if st.button("Open event page", key=f"open_event_{t['event_id']}"):
+                    open_event(t["event_id"])
+            else:
+                st.write("**Event:** (General task)")
+
+            st.write(f"**Due date:** {t['due_date']}")
+            st.write(f"**Owner:** {t['owner']}")
+            st.write(f"**Status:** {t['status']}")
+
+        with right:
+            st.write(f"**Priority:** {t['priority']}")
+            st.write(f"**Category:** {t['category']}")
+            st.write("**Notes:**")
+            st.write(t["notes"] if str(t["notes"]).strip() else "—")
+
+        # quick edit (optional, but very useful)
+        with st.expander("Quick update this task"):
+            with st.form(f"quick_update_{t['task_id']}"):
+                new_status = st.selectbox("Status", TASK_STATUS, index=TASK_STATUS.index(t["status"]) if t["status"] in TASK_STATUS else 0)
+                new_owner = st.text_input("Owner", value=str(t["owner"]))
+                new_due = st.text_input("Due date (YYYY-MM-DD)", value=str(t["due_date"]))
+                new_priority = st.text_input("Priority", value=str(t["priority"]))
+                new_category = st.text_input("Category", value=str(t["category"]))
+                new_notes = st.text_area("Notes", value=str(t["notes"]))
+
+                save_one = st.form_submit_button("Save this task")
+
+            if save_one:
+                base = read_csv("data/tasks.csv", TASK_COLS)
+                mask = base["task_id"].astype(str) == str(t["task_id"])
+                base.loc[mask, "status"] = new_status
+                base.loc[mask, "owner"] = new_owner
+                base.loc[mask, "due_date"] = new_due
+                base.loc[mask, "priority"] = new_priority
+                base.loc[mask, "category"] = new_category
+                base.loc[mask, "notes"] = new_notes
+
+                write_csv("data/tasks.csv", base, f"Quick update task {t['task_id']}")
+                st.success("Task updated.")
+                st.rerun()
+
+# --------------------------------------------------
 # TASK TABLE (FIRST)
 # --------------------------------------------------
 st.divider()
@@ -153,74 +221,6 @@ else:
             key="task_detail_picker"
         )
         st.session_state["current_task_id"] = selected_id
-
-# --------------------------------------------------
-# TASK DETAILS BLOCK (UNDER TABLE)
-# --------------------------------------------------
-st.divider()
-st.subheader("Task details")
-
-current_id = st.session_state.get("current_task_id")
-
-if not current_id or tasks.empty:
-    st.info("Select a task to view details.")
-else:
-    row = tasks[tasks["task_id"].astype(str) == str(current_id)]
-    if row.empty:
-        st.info("Selected task not found.")
-    else:
-        t = row.iloc[0]
-
-        # display card-like block
-        left, right = st.columns([3,2])
-
-        with left:
-            st.markdown(f"### 📝 {t['task_name']}")
-            st.write(f"**Task ID:** {t['task_id']}")
-            st.write(f"**Scope:** {t['scope']}")
-
-            if str(t["event_id"]).strip():
-                st.write(f"**Event:** {t['event_name']}  \n**Event ID:** {t['event_id']}")
-                if st.button("Open event page", key=f"open_event_{t['event_id']}"):
-                    open_event(t["event_id"])
-            else:
-                st.write("**Event:** (General task)")
-
-            st.write(f"**Due date:** {t['due_date']}")
-            st.write(f"**Owner:** {t['owner']}")
-            st.write(f"**Status:** {t['status']}")
-
-        with right:
-            st.write(f"**Priority:** {t['priority']}")
-            st.write(f"**Category:** {t['category']}")
-            st.write("**Notes:**")
-            st.write(t["notes"] if str(t["notes"]).strip() else "—")
-
-        # quick edit (optional, but very useful)
-        with st.expander("Quick update this task"):
-            with st.form(f"quick_update_{t['task_id']}"):
-                new_status = st.selectbox("Status", TASK_STATUS, index=TASK_STATUS.index(t["status"]) if t["status"] in TASK_STATUS else 0)
-                new_owner = st.text_input("Owner", value=str(t["owner"]))
-                new_due = st.text_input("Due date (YYYY-MM-DD)", value=str(t["due_date"]))
-                new_priority = st.text_input("Priority", value=str(t["priority"]))
-                new_category = st.text_input("Category", value=str(t["category"]))
-                new_notes = st.text_area("Notes", value=str(t["notes"]))
-
-                save_one = st.form_submit_button("Save this task")
-
-            if save_one:
-                base = read_csv("data/tasks.csv", TASK_COLS)
-                mask = base["task_id"].astype(str) == str(t["task_id"])
-                base.loc[mask, "status"] = new_status
-                base.loc[mask, "owner"] = new_owner
-                base.loc[mask, "due_date"] = new_due
-                base.loc[mask, "priority"] = new_priority
-                base.loc[mask, "category"] = new_category
-                base.loc[mask, "notes"] = new_notes
-
-                write_csv("data/tasks.csv", base, f"Quick update task {t['task_id']}")
-                st.success("Task updated.")
-                st.rerun()
 
 # --------------------------------------------------
 # ADD TASK (BOTTOM)
