@@ -26,6 +26,11 @@ def open_event(eid):
     st.session_state["selected_event_id"] = eid
     st.switch_page("pages/2_Event_Detail.py")
 
+def mark_done(task_id):
+    base = read_csv("data/tasks.csv", TASK_COLS)
+    base.loc[base["task_id"].astype(str) == str(task_id), "status"] = "Done"
+    write_csv("data/tasks.csv", base, f"Mark task {task_id} done")
+
 # --------------------------------------------------
 # PAGE
 # --------------------------------------------------
@@ -38,20 +43,13 @@ tasks  = read_csv("data/tasks.csv", TASK_COLS)
 tasks["scope"] = tasks["scope"].astype(str).fillna("")
 tasks.loc[tasks["scope"].str.strip() == "", "scope"] = "General"
 
-# merge event names
+# enrich event name
 tasks = tasks.merge(
     events[["event_id","event_name"]],
     on="event_id",
     how="left"
 )
 tasks["event_name"] = tasks["event_name"].fillna("")
-
-# --------------------------------------------------
-# HANDLE NAV FROM HOMEPAGE
-# --------------------------------------------------
-nav_task = st.session_state.pop("selected_task_id", None)
-if nav_task:
-    st.session_state["current_task_id"] = str(nav_task)
 
 # --------------------------------------------------
 # FILTERS
@@ -69,7 +67,7 @@ with c3:
 view = tasks.copy()
 
 if scope != "All":
-    view = view[view["scope"].str.lower() == scope.lower()]
+    view = view[view["scope"] == scope]
 
 if status != "All":
     view = view[view["status"] == status]
@@ -79,11 +77,10 @@ if q.strip():
     view = view[
         view["task_name"].str.lower().str.contains(qq, na=False) |
         view["event_name"].str.lower().str.contains(qq, na=False) |
-        view["owner"].str.lower().str.contains(qq, na=False) |
-        view["notes"].str.lower().str.contains(qq, na=False)
+        view["owner"].str.lower().str.contains(qq, na=False)
     ]
 
-# sort: overdue → active → done
+# sort
 today = date.today().isoformat()
 view["is_done"] = view["status"] == "Done"
 view = view.sort_values(["is_done","due_date","task_name"])
@@ -91,7 +88,7 @@ view = view.sort_values(["is_done","due_date","task_name"])
 st.divider()
 
 # --------------------------------------------------
-# TASK LIST (CLICKABLE)
+# TASK LIST (CLICK → POPUP)
 # --------------------------------------------------
 st.subheader("Task list")
 
@@ -114,60 +111,68 @@ else:
                     f"{icon} {r['task_name']} — {scope_label}",
                     key=f"open_{task_id}",
                 ):
-                    st.session_state["current_task_id"] = task_id
-                    st.rerun()
+                    st.session_state["popup_task_id"] = task_id
+                    st.session_state["show_task_popup"] = True
 
-                meta = f"Due: {r['due_date']} | Owner: {r['owner']} | Status: {r['status']}"
-                st.caption(meta)
+                st.caption(f"Due: {r['due_date']} | Owner: {r['owner']} | Status: {r['status']}")
 
             with right:
                 if not is_done:
                     if st.button("✔ Done", key=f"done_{task_id}"):
-                        base = read_csv("data/tasks.csv", TASK_COLS)
-                        base.loc[
-                            base["task_id"].astype(str) == task_id,
-                            "status"
-                        ] = "Done"
-                        write_csv("data/tasks.csv", base, f"Mark task {task_id} done")
+                        mark_done(task_id)
                         st.success("Task marked as done.")
                         st.rerun()
 
 # --------------------------------------------------
-# TASK DETAIL BLOCK
+# TASK DETAIL POPUP (MODAL)
 # --------------------------------------------------
-st.divider()
-st.subheader("Task details")
+if st.session_state.get("show_task_popup"):
+    task_id = st.session_state.get("popup_task_id")
 
-current_id = st.session_state.get("current_task_id")
-
-if not current_id:
-    st.info("Click a task to view details.")
-else:
-    row = tasks[tasks["task_id"].astype(str) == str(current_id)]
-    if row.empty:
-        st.info("Task not found.")
-    else:
+    row = tasks[tasks["task_id"].astype(str) == str(task_id)]
+    if not row.empty:
         t = row.iloc[0]
 
-        left, right = st.columns([3,2])
+        @st.dialog("📝 Task details")
+        def task_dialog():
+            left, right = st.columns([3,2])
 
-        with left:
-            st.markdown(f"### 📝 {t['task_name']}")
-            st.write(f"**Task ID:** {t['task_id']}")
-            st.write(f"**Scope:** {t['scope']}")
-            if t["scope"] == "Event":
-                st.write(f"**Event:** {t['event_name']}")
-                if st.button("Open event", key=f"open_event_{t['event_id']}"):
-                    open_event(t["event_id"])
-            st.write(f"**Due date:** {t['due_date']}")
-            st.write(f"**Owner:** {t['owner']}")
-            st.write(f"**Status:** {t['status']}")
+            with left:
+                st.markdown(f"### {t['task_name']}")
+                st.write(f"**Task ID:** {t['task_id']}")
+                st.write(f"**Scope:** {t['scope']}")
+                if t["scope"] == "Event":
+                    st.write(f"**Event:** {t['event_name']}")
+                    if st.button("Open event"):
+                        open_event(t["event_id"])
 
-        with right:
-            st.write(f"**Priority:** {t['priority']}")
-            st.write(f"**Category:** {t['category']}")
-            st.write("**Notes:**")
-            st.write(t["notes"] if str(t["notes"]).strip() else "—")
+                st.write(f"**Due date:** {t['due_date']}")
+                st.write(f"**Owner:** {t['owner']}")
+                st.write(f"**Status:** {t['status']}")
+
+            with right:
+                st.write(f"**Priority:** {t['priority']}")
+                st.write(f"**Category:** {t['category']}")
+                st.write("**Notes:**")
+                st.write(t["notes"] if str(t["notes"]).strip() else "—")
+
+            st.divider()
+
+            c1, c2 = st.columns(2)
+            with c1:
+                if t["status"] != "Done":
+                    if st.button("✔ Mark as Done"):
+                        mark_done(t["task_id"])
+                        st.session_state["show_task_popup"] = False
+                        st.success("Task completed.")
+                        st.rerun()
+
+            with c2:
+                if st.button("Close"):
+                    st.session_state["show_task_popup"] = False
+                    st.rerun()
+
+        task_dialog()
 
 # --------------------------------------------------
 # ADD TASK
@@ -190,8 +195,6 @@ with st.form("add_task"):
     due_date  = st.text_input("Due date (YYYY-MM-DD)", value=str(date.today()))
     owner     = st.text_input("Owner")
     status_in = st.selectbox("Status", TASK_STATUS)
-    priority  = st.text_input("Priority (optional)")
-    category  = st.text_input("Category (optional)")
     notes     = st.text_area("Notes")
 
     add = st.form_submit_button("Add task")
@@ -199,6 +202,7 @@ with st.form("add_task"):
 if add:
     base = read_csv("data/tasks.csv", TASK_COLS)
     new_id = str(next_int_id(base,"task_id"))
+
     row = {
         "task_id": new_id,
         "scope": scope_in,
@@ -207,12 +211,12 @@ if add:
         "due_date": due_date,
         "owner": owner,
         "status": status_in,
-        "priority": priority,
-        "category": category,
+        "priority": "",
+        "category": "",
         "notes": notes,
     }
+
     base = pd.concat([base, pd.DataFrame([row])], ignore_index=True)
     write_csv("data/tasks.csv", base, f"Add task {new_id}")
     st.success("Task added.")
-    st.session_state["current_task_id"] = new_id
     st.rerun()
