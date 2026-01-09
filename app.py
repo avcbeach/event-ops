@@ -25,29 +25,23 @@ TASK_COLS  = ["task_id","scope","event_id","task_name","due_date","owner","statu
 # --------------------------------------------------
 st.markdown("""
 <style>
-/* Month cell container: minimal padding, NO fixed height */
 .day {
   padding: 6px 6px 8px 6px;
   border: 1px solid #e5e7eb;
   border-radius: 10px;
   background: #fff;
 }
-
-/* Empty day: looks lighter, still aligned */
 .day.empty {
   background: #fafafa;
   border-style: dashed;
   opacity: 0.85;
 }
-
-/* Outside-month day */
 .day.off {
   background: #ffffff;
   border: none;
   padding: 6px;
   opacity: 0.35;
 }
-
 .daynum button {
   width: 100%;
   padding: 2px 6px;
@@ -56,8 +50,6 @@ st.markdown("""
   font-weight: 600;
   font-size: 14px;
 }
-
-/* Small counter row */
 .counters {
   margin-top: 6px;
   font-size: 12px;
@@ -65,8 +57,6 @@ st.markdown("""
   gap: 6px;
   flex-wrap: wrap;
 }
-
-/* Badges */
 .badge {
   display: inline-block;
   padding: 2px 6px;
@@ -105,9 +95,6 @@ def open_task(tid):
     st.session_state["selected_task_id"] = tid
     st.switch_page("pages/3_Tasks.py")
 
-def popover_or_expander(label):
-    return st.popover(label) if hasattr(st, "popover") else st.expander(label)
-
 # --------------------------------------------------
 # LOAD DATA
 # --------------------------------------------------
@@ -131,48 +118,8 @@ tasks = tasks.merge(events[["event_id","event_name"]], on="event_id", how="left"
 tasks["event_name"] = tasks["event_name"].fillna("")
 
 # --------------------------------------------------
-# SUMMARY
+# HELPERS FOR VIEWS
 # --------------------------------------------------
-ongoing = events[(events["start"] <= today) & (events["end"] >= today)]
-upcoming_14 = events[(events["start"] > today) & (events["start"] <= today + timedelta(days=14))]
-overdue = tasks[(tasks["due"].notna()) & (tasks["due"] < today) & (tasks["status"].astype(str).str.lower() != "done")]
-
-c1,c2,c3,c4 = st.columns(4)
-c1.metric("Total events", len(events))
-c2.metric("Ongoing", len(ongoing))
-c3.metric("Upcoming (14 days)", len(upcoming_14))
-c4.metric("Overdue tasks", len(overdue))
-
-st.divider()
-
-# --------------------------------------------------
-# LEGEND (ON PAGE, CLEAR)
-# --------------------------------------------------
-st.subheader("Legend (colors)")
-l1,l2,l3,l4 = st.columns(4)
-l1.markdown("🟦 <span class='badge b-ev'>Event (planned / upcoming)</span>", unsafe_allow_html=True)
-l2.markdown("🟩 <span class='badge b-on'>Event (ongoing)</span>", unsafe_allow_html=True)
-l3.markdown("🟨 <span class='badge b-tk'>Tasks due</span>", unsafe_allow_html=True)
-l4.markdown("🔴 <span class='badge b-od'>Overdue tasks</span>", unsafe_allow_html=True)
-
-st.markdown("<div class='small-note'>Month view shows counts only. Click a day number to see full agenda below. Click an item in agenda to open its page.</div>", unsafe_allow_html=True)
-
-st.divider()
-
-# --------------------------------------------------
-# MONTH CONTROLS
-# --------------------------------------------------
-st.subheader("🗓️ Month view")
-
-m1,m2 = st.columns([2,2])
-with m1:
-    year = st.number_input("Year", 2000, 2100, value=today.year, step=1)
-with m2:
-    month = st.selectbox("Month", list(range(1,13)), index=today.month-1)
-
-cal = calendar.Calendar(firstweekday=0)  # Monday start
-weeks = cal.monthdatescalendar(int(year), int(month))
-
 def events_for_day(d):
     if events.empty:
         return events.iloc[0:0]
@@ -184,93 +131,54 @@ def tasks_for_day(d):
         return tasks.iloc[0:0]
     return tasks[tasks["due"] == d].copy()
 
-# header row
-dow = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
-hdr = st.columns(7)
-for i, name in enumerate(dow):
-    hdr[i].markdown(f"**{name}**")
-
 # --------------------------------------------------
-# MONTH GRID (COMPACT, NO EMPTY BIG BOX)
+# 1) DASHBOARD INFO
 # --------------------------------------------------
-for week in weeks:
-    cols = st.columns(7, gap="small")
-    for i, d in enumerate(week):
-        with cols[i]:
-            if d.month != month:
-                st.markdown(f"<div class='day off'>{d.day}</div>", unsafe_allow_html=True)
-                continue
+st.subheader("1) Dashboard")
 
-            ev = events_for_day(d)
-            td = tasks_for_day(d)
+ongoing = events[(events["start"].notna()) & (events["end"].notna()) & (events["start"] <= today) & (events["end"] >= today)]
+upcoming_14 = events[(events["start"].notna()) & (events["start"] > today) & (events["start"] <= today + timedelta(days=14))]
+overdue = tasks[(tasks["due"].notna()) & (tasks["due"] < today) & (tasks["status"].astype(str).str.lower() != "done")]
 
-            # counts
-            ev_ongoing = ev[ev["status"].astype(str).str.lower() == "ongoing"]
-            ev_other = ev[ev["status"].astype(str).str.lower() != "ongoing"]
-
-            td_over = td[(td["status"].astype(str).str.lower() != "done") & (td["due"].notna()) & (td["due"] < today)]
-            td_due = td  # all tasks due this day
-
-            is_empty = (len(ev) == 0 and len(td) == 0)
-
-            st.markdown(f"<div class='day {'empty' if is_empty else ''}'>", unsafe_allow_html=True)
-
-            # day number (click -> agenda)
-            st.markdown("<div class='daynum'>", unsafe_allow_html=True)
-            if st.button(f"{d.day}{' ⭐' if d == today else ''}", key=f"day_{d.isoformat()}"):
-                st.session_state["agenda_date"] = d.isoformat()
-            st.markdown("</div>", unsafe_allow_html=True)
-
-            # show compact counters only if there is info
-            if not is_empty:
-                parts = []
-                if len(ev_other) > 0:
-                    parts.append(f"<span class='badge b-ev'>🟦 E {len(ev_other)}</span>")
-                if len(ev_ongoing) > 0:
-                    parts.append(f"<span class='badge b-on'>🟩 E {len(ev_ongoing)}</span>")
-                if len(td_due) > 0:
-                    parts.append(f"<span class='badge b-tk'>🟨 T {len(td_due)}</span>")
-                if len(td_over) > 0:
-                    parts.append(f"<span class='badge b-od'>🔴 {len(td_over)}</span>")
-
-                st.markdown("<div class='counters'>" + "".join(parts) + "</div>", unsafe_allow_html=True)
-
-            st.markdown("</div>", unsafe_allow_html=True)
+c1,c2,c3,c4 = st.columns(4)
+c1.metric("Total events", len(events))
+c2.metric("Ongoing", len(ongoing))
+c3.metric("Upcoming (14 days)", len(upcoming_14))
+c4.metric("Overdue tasks", len(overdue))
 
 st.divider()
 
 # --------------------------------------------------
-# AGENDA (DETAILS LIVE HERE)
+# 2) DAY AGENDA
 # --------------------------------------------------
-st.subheader("📌 Day agenda")
+st.subheader("2) Day agenda")
 
-agenda_iso = st.session_state.get("agenda_date")
-agenda_day = parse_date(agenda_iso) if agenda_iso else None
-if not agenda_day:
-    agenda_day = today
-    st.session_state["agenda_date"] = today.isoformat()
+default_agenda = st.session_state.get("agenda_date")
+if isinstance(default_agenda, str):
+    default_agenda = parse_date(default_agenda)
 
-st.write(f"Selected date: **{agenda_day.isoformat()}**")
+agenda_day = st.date_input("Select date", value=default_agenda or today)
+st.session_state["agenda_date"] = agenda_day.isoformat()
 
-# Events for day
+st.markdown(f"**Selected date:** {agenda_day.isoformat()}")
+
+# Events
 st.markdown("### 🏐 Events")
-ev = events_for_day(agenda_day).copy()
+ev = events_for_day(agenda_day)
 if ev.empty:
     st.info("No events.")
 else:
-    # sort: ongoing first, then start date/name
     ev["is_ongoing"] = (ev["status"].astype(str).str.lower() == "ongoing").astype(int)
     ev = ev.sort_values(["is_ongoing","start_date","event_name"], ascending=[False, True, True])
-
     for _, r in ev.iterrows():
         icon = "🟩" if str(r["status"]).lower() == "ongoing" else "🟦"
         line = f"{icon} {r['event_name']} — {r['location']} ({r['start_date']} → {r['end_date']})"
         if st.button(line, key=f"ag_ev_{agenda_day.isoformat()}_{r['event_id']}"):
             open_event(r["event_id"])
 
-# Tasks due that day
+# Tasks due
 st.markdown("### 📝 Tasks due")
-td = tasks_for_day(agenda_day).copy()
+td = tasks_for_day(agenda_day)
 if td.empty:
     st.info("No tasks.")
 else:
@@ -285,3 +193,78 @@ else:
         line = f"{overdue_icon} {r['task_name']} — {scope}{owner}{status}"
         if st.button(line, key=f"ag_tk_{agenda_day.isoformat()}_{r['task_id']}"):
             open_task(r["task_id"])
+
+st.divider()
+
+# --------------------------------------------------
+# 3) CALENDAR (MONTH VIEW)
+# --------------------------------------------------
+st.subheader("3) Calendar")
+
+m1,m2 = st.columns([2,2])
+with m1:
+    year = st.number_input("Year", 2000, 2100, value=today.year, step=1)
+with m2:
+    month = st.selectbox("Month", list(range(1,13)), index=today.month-1)
+
+st.markdown("<div class='small-note'>Month view shows counts only. Click a day number to update Day agenda above.</div>", unsafe_allow_html=True)
+
+cal = calendar.Calendar(firstweekday=0)
+weeks = cal.monthdatescalendar(int(year), int(month))
+
+dow = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
+hdr = st.columns(7)
+for i, name in enumerate(dow):
+    hdr[i].markdown(f"**{name}**")
+
+for week in weeks:
+    cols = st.columns(7, gap="small")
+    for i, d in enumerate(week):
+        with cols[i]:
+            if d.month != month:
+                st.markdown(f"<div class='day off'>{d.day}</div>", unsafe_allow_html=True)
+                continue
+
+            ev_d = events_for_day(d)
+            td_d = tasks_for_day(d)
+
+            ev_ongoing = ev_d[ev_d["status"].astype(str).str.lower() == "ongoing"]
+            ev_other = ev_d[ev_d["status"].astype(str).str.lower() != "ongoing"]
+
+            td_over = td_d[(td_d["status"].astype(str).str.lower() != "done") & (td_d["due"].notna()) & (td_d["due"] < today)]
+
+            is_empty = (len(ev_d) == 0 and len(td_d) == 0)
+            st.markdown(f"<div class='day {'empty' if is_empty else ''}'>", unsafe_allow_html=True)
+
+            # day number clickable
+            if st.button(f"{d.day}{' ⭐' if d == today else ''}", key=f"day_{d.isoformat()}"):
+                st.session_state["agenda_date"] = d.isoformat()
+                st.rerun()
+
+            if not is_empty:
+                parts = []
+                if len(ev_other) > 0:
+                    parts.append(f"<span class='badge b-ev'>🟦 E {len(ev_other)}</span>")
+                if len(ev_ongoing) > 0:
+                    parts.append(f"<span class='badge b-on'>🟩 E {len(ev_ongoing)}</span>")
+                if len(td_d) > 0:
+                    parts.append(f"<span class='badge b-tk'>🟨 T {len(td_d)}</span>")
+                if len(td_over) > 0:
+                    parts.append(f"<span class='badge b-od'>🔴 {len(td_over)}</span>")
+
+                st.markdown("<div class='counters'>" + "".join(parts) + "</div>", unsafe_allow_html=True)
+
+            st.markdown("</div>", unsafe_allow_html=True)
+
+st.divider()
+
+# --------------------------------------------------
+# 4) LEGENDS (AT THE BOTTOM)
+# --------------------------------------------------
+st.subheader("4) Legends")
+
+l1,l2,l3,l4 = st.columns(4)
+l1.markdown("<span class='badge b-ev'>🟦 Event (planned / upcoming)</span>", unsafe_allow_html=True)
+l2.markdown("<span class='badge b-on'>🟩 Event (ongoing)</span>", unsafe_allow_html=True)
+l3.markdown("<span class='badge b-tk'>🟨 Tasks due</span>", unsafe_allow_html=True)
+l4.markdown("<span class='badge b-od'>🔴 Overdue tasks</span>", unsafe_allow_html=True)
