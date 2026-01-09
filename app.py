@@ -5,6 +5,10 @@ from datetime import date, datetime, timedelta
 
 from lib.data_store import read_csv
 
+# ---- CLEAR NAVIGATION STATE (IMPORTANT) ----
+st.session_state.pop("selected_task_id", None)
+st.session_state.pop("selected_event_id", None)
+
 # ---------------- PAGE SETUP ----------------
 st.set_page_config(page_title="Event Ops", layout="wide")
 st.title("🏐 Event Operations Dashboard")
