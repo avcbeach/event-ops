@@ -5,12 +5,58 @@ from datetime import date, datetime, timedelta
 
 from lib.data_store import read_csv
 
+# ---------------- PAGE SETUP ----------------
 st.set_page_config(page_title="Event Ops", layout="wide")
 st.title("🏐 Event Operations Dashboard")
 
+# ---------------- SCHEMAS ----------------
 EVENT_COLS = ["event_id","event_name","location","start_date","end_date","status"]
 TASK_COLS  = ["task_id","scope","event_id","task_name","due_date","owner","status","priority","category","notes"]
 
+# ---------------- CSS (CALENDAR UI) ----------------
+st.markdown("""
+<style>
+.day-cell {
+    height: 170px;
+    padding: 6px;
+    border-radius: 10px;
+    border: 1px solid #e5e7eb;
+    overflow: hidden;
+    background: #ffffff;
+}
+.day-header {
+    font-weight: 600;
+    font-size: 14px;
+    margin-bottom: 4px;
+}
+.pill {
+    display: block;
+    padding: 2px 6px;
+    margin-bottom: 4px;
+    border-radius: 6px;
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+}
+.ev-blue { background:#e8f1ff; color:#1e40af; }
+.ev-green { background:#e9f7ef; color:#065f46; }
+.ev-grey { background:#f3f4f6; color:#374151; }
+.ev-red { background:#fee2e2; color:#991b1b; }
+
+.tk-yellow { background:#fef3c7; color:#92400e; }
+.tk-purple { background:#ede9fe; color:#5b21b6; }
+
+.more {
+    font-size: 12px;
+    color: #2563eb;
+    cursor: pointer;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ---------------- HELPERS ----------------
 def parse_date(s):
     try:
         return datetime.strptime(str(s), "%Y-%m-%d").date()
@@ -20,261 +66,174 @@ def parse_date(s):
 def overlaps(day, start, end):
     return bool(start and end and start <= day <= end)
 
-def safe(x):
-    return "" if pd.isna(x) else str(x)
+def event_class(status):
+    s = str(status).lower()
+    if s == "ongoing":
+        return "ev-green"
+    if s == "completed":
+        return "ev-grey"
+    if s == "cancelled":
+        return "ev-red"
+    return "ev-blue"
 
-def short_label(text, max_len=95):
-    t = (text or "").strip()
-    return t if len(t) <= max_len else t[:max_len-1] + "…"
+def pill_html(text, css):
+    return f"<div class='pill {css}' title='{text}'>{text}</div>"
 
-def popover_or_expander(label: str):
-    if hasattr(st, "popover"):
-        return st.popover(label)
-    return st.expander(label)
-
-def open_event(eid: str):
+def open_event(eid):
     st.session_state["selected_event_id"] = eid
     st.switch_page("pages/2_Event_Detail.py")
 
-def open_task(tid: str):
+def open_task(tid):
     st.session_state["selected_task_id"] = tid
     st.switch_page("pages/3_Tasks.py")
 
-# ---- load from GitHub ----
+def popover_or_expander(label):
+    return st.popover(label) if hasattr(st, "popover") else st.expander(label)
+
+# ---------------- LOAD DATA ----------------
 events = read_csv("data/events.csv", EVENT_COLS)
 tasks  = read_csv("data/tasks.csv", TASK_COLS)
 
 today = date.today()
 
 # normalize scope
-if not tasks.empty:
-    tasks["scope"] = tasks["scope"].astype(str).fillna("")
-    blank = tasks["scope"].str.strip().eq("")
-    tasks.loc[blank & tasks["event_id"].astype(str).str.strip().ne(""), "scope"] = "Event"
-    tasks.loc[blank & tasks["event_id"].astype(str).str.strip().eq(""), "scope"] = "General"
+tasks["scope"] = tasks["scope"].astype(str).fillna("")
+blank = tasks["scope"].str.strip().eq("")
+tasks.loc[blank & tasks["event_id"].astype(str).str.strip().ne(""), "scope"] = "Event"
+tasks.loc[blank & tasks["event_id"].astype(str).str.strip().eq(""), "scope"] = "General"
 
 # parse dates
-if not events.empty:
-    events["start"] = events["start_date"].apply(parse_date)
-    events["end"] = events["end_date"].apply(parse_date)
-else:
-    events["start"] = []
-    events["end"] = []
+events["start"] = events["start_date"].apply(parse_date)
+events["end"]   = events["end_date"].apply(parse_date)
+tasks["due"]    = tasks["due_date"].apply(parse_date)
 
-if not tasks.empty:
-    tasks["due"] = tasks["due_date"].apply(parse_date)
-else:
-    tasks["due"] = []
+# merge event name into tasks
+tasks = tasks.merge(
+    events[["event_id","event_name"]],
+    on="event_id",
+    how="left"
+)
+tasks["event_name"] = tasks["event_name"].fillna("")
 
-# join event name into tasks
-if not tasks.empty and not events.empty:
-    tasks = tasks.merge(events[["event_id","event_name"]], on="event_id", how="left")
-    tasks["event_name"] = tasks["event_name"].fillna("")
-else:
-    tasks["event_name"] = ""
-
-# quick summary
-ongoing = events[(events["start"].notna()) & (events["end"].notna()) & (events["start"] <= today) & (events["end"] >= today)] if not events.empty else pd.DataFrame()
-upcoming = events[(events["start"].notna()) & (events["start"] > today) & (events["start"] <= today + timedelta(days=14))] if not events.empty else pd.DataFrame()
-overdue = tasks[(tasks["due"].notna()) & (tasks["due"] < today) & (tasks["status"].astype(str).str.lower() != "done")] if not tasks.empty else pd.DataFrame()
+# ---------------- SUMMARY ----------------
+ongoing = events[(events["start"] <= today) & (events["end"] >= today)]
+upcoming = events[(events["start"] > today) & (events["start"] <= today + timedelta(days=14))]
+overdue = tasks[(tasks["due"] < today) & (tasks["status"].str.lower() != "done")]
 
 c1,c2,c3,c4 = st.columns(4)
 c1.metric("Total events", len(events))
-c2.metric("Ongoing events", len(ongoing))
+c2.metric("Ongoing", len(ongoing))
 c3.metric("Upcoming (14 days)", len(upcoming))
 c4.metric("Overdue tasks", len(overdue))
 
 st.divider()
 
-# ---- calendar ----
+# ---------------- CALENDAR CONTROLS ----------------
 st.subheader("🗓️ Monthly calendar")
 
 m1,m2,m3 = st.columns([2,2,6])
 with m1:
-    year = st.number_input("Year", 2000, 2100, value=today.year, step=1)
+    year = st.number_input("Year", 2000, 2100, value=today.year)
 with m2:
     month = st.selectbox("Month", list(range(1,13)), index=today.month-1)
 with m3:
-    st.caption("Click day = agenda. Click event/task name = open. “+more” shows full list.")
+    st.caption("Color-coded • fixed height • click items • +more when crowded")
 
-cal = calendar.Calendar(firstweekday=0)
+cal = calendar.Calendar()
 weeks = cal.monthdatescalendar(int(year), int(month))
 
 def events_for_day(d):
-    if events.empty: return events.iloc[0:0]
-    mask = events.apply(lambda r: overlaps(d, r["start"], r["end"]), axis=1)
-    out = events[mask].copy()
-    if not out.empty:
-        out = out.sort_values(["start_date","event_name"], na_position="last")
-    return out
+    return events[events.apply(lambda r: overlaps(d, r["start"], r["end"]), axis=1)]
 
 def tasks_for_day(d):
-    if tasks.empty or "due" not in tasks.columns: return tasks.iloc[0:0]
-    out = tasks[tasks["due"] == d].copy()
-    if not out.empty:
-        out = out.sort_values(["scope","event_name","task_name"], na_position="last")
-    return out
+    return tasks[tasks["due"] == d]
 
+# header
 dow = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
-hdr = st.columns(7)
-for i,n in enumerate(dow):
-    hdr[i].markdown(f"**{n}**")
+cols = st.columns(7)
+for i, name in enumerate(dow):
+    cols[i].markdown(f"**{name}**")
 
-MAX_E = 3
-MAX_T = 2
+MAX_ITEMS = 3
 
+# ---------------- CALENDAR GRID ----------------
 for week in weeks:
     cols = st.columns(7, gap="small")
     for i, d in enumerate(week):
-        in_month = (d.month == month)
         with cols[i]:
-            with st.container(border=True):
-                if not in_month:
-                    st.caption(str(d.day))
-                    st.caption(" ")
-                    continue
+            st.markdown("<div class='day-cell'>", unsafe_allow_html=True)
 
-                label = f"{d.day} ⭐" if d == today else str(d.day)
-                if st.button(label, key=f"day_{d.isoformat()}"):
-                    st.session_state["agenda_date"] = d.isoformat()
+            if d.month != month:
+                st.markdown(f"<div class='day-header'>{d.day}</div>", unsafe_allow_html=True)
+                st.markdown("</div>", unsafe_allow_html=True)
+                continue
 
-                ev = events_for_day(d)
-                td = tasks_for_day(d)
+            header = f"{d.day} ⭐" if d == today else str(d.day)
+            if st.button(header, key=f"day_{d.isoformat()}"):
+                st.session_state["agenda_date"] = d.isoformat()
 
-                if ev.empty and td.empty:
-                    st.caption(" ")
-                    continue
+            ev = events_for_day(d)
+            td = tasks_for_day(d)
 
-                if not ev.empty:
-                    st.caption("Events")
-                    shown = ev.head(MAX_E)
-                    for _, r in shown.iterrows():
-                        eid = safe(r["event_id"]).strip()
-                        name = safe(r["event_name"]).strip() or "(No name)"
-                        loc = safe(r["location"]).strip()
-                        text = name if not loc else f"{name} — {loc}"
-                        if st.button(short_label(text), key=f"ev_{d.isoformat()}_{eid}"):
-                            open_event(eid)
+            shown = 0
 
-                    rem = len(ev) - len(shown)
-                    if rem > 0:
-                        with popover_or_expander(f"+{rem} more events"):
-                            for _, r in ev.iloc[MAX_E:].iterrows():
-                                eid = safe(r["event_id"]).strip()
-                                name = safe(r["event_name"]).strip() or "(No name)"
-                                loc = safe(r["location"]).strip()
-                                status = safe(r["status"]).strip()
-                                text = name if not loc else f"{name} — {loc}"
-                                if status:
-                                    text = f"{text} [{status}]"
-                                if st.button(short_label(text, 120), key=f"evp_{d.isoformat()}_{eid}"):
-                                    open_event(eid)
+            # events
+            for _, r in ev.iterrows():
+                if shown >= MAX_ITEMS:
+                    break
+                html = pill_html(r["event_name"], event_class(r["status"]))
+                if st.markdown(html, unsafe_allow_html=True):
+                    open_event(r["event_id"])
+                shown += 1
 
-                if not td.empty:
-                    st.caption("Tasks due")
-                    shown = td.head(MAX_T)
-                    for _, r in shown.iterrows():
-                        tid = safe(r["task_id"]).strip()
-                        tname = safe(r["task_name"]).strip() or "(No task)"
-                        scope = safe(r["scope"]).strip()
-                        evname = safe(r.get("event_name","")).strip()
-                        owner = safe(r["owner"]).strip()
-                        status = safe(r["status"]).strip()
+            # tasks
+            for _, r in td.iterrows():
+                if shown >= MAX_ITEMS:
+                    break
+                css = "tk-purple" if r["scope"] == "Event" else "tk-yellow"
+                html = pill_html(r["task_name"], css)
+                if st.markdown(html, unsafe_allow_html=True):
+                    open_task(r["task_id"])
+                shown += 1
 
-                        if scope.lower() == "general":
-                            text = f"{tname} (General)"
-                        else:
-                            text = tname if not evname else f"{tname} — {evname}"
+            remaining = len(ev) + len(td) - shown
+            if remaining > 0:
+                with popover_or_expander(f"+{remaining} more"):
+                    for _, r in ev.iterrows():
+                        if st.button(r["event_name"], key=f"pev_{d}_{r['event_id']}"):
+                            open_event(r["event_id"])
+                    for _, r in td.iterrows():
+                        if st.button(r["task_name"], key=f"ptk_{d}_{r['task_id']}"):
+                            open_task(r["task_id"])
 
-                        meta = []
-                        if owner: meta.append(owner)
-                        if status: meta.append(status)
-                        if meta:
-                            text = f"{text} [{', '.join(meta)}]"
+            st.markdown("</div>", unsafe_allow_html=True)
 
-                        if st.button(short_label(text, 120), key=f"tk_{d.isoformat()}_{tid}"):
-                            open_task(tid)
-
-                    rem = len(td) - len(shown)
-                    if rem > 0:
-                        with popover_or_expander(f"+{rem} more tasks"):
-                            for _, r in td.iloc[MAX_T:].iterrows():
-                                tid = safe(r["task_id"]).strip()
-                                tname = safe(r["task_name"]).strip() or "(No task)"
-                                scope = safe(r["scope"]).strip()
-                                evname = safe(r.get("event_name","")).strip()
-                                owner = safe(r["owner"]).strip()
-                                status = safe(r["status"]).strip()
-
-                                if scope.lower() == "general":
-                                    text = f"{tname} (General)"
-                                else:
-                                    text = tname if not evname else f"{tname} — {evname}"
-
-                                meta = []
-                                if owner: meta.append(f"Owner: {owner}")
-                                if status: meta.append(status)
-                                if meta:
-                                    text = f"{text} ({' | '.join(meta)})"
-
-                                if st.button(short_label(text, 140), key=f"tkp_{d.isoformat()}_{tid}"):
-                                    open_task(tid)
-
+# ---------------- AGENDA ----------------
 st.divider()
-
-# ---- agenda ----
 st.subheader("📌 Day agenda")
-agenda_iso = st.session_state.get("agenda_date", "")
+
+agenda_iso = st.session_state.get("agenda_date")
 agenda_day = parse_date(agenda_iso) if agenda_iso else None
 
 if not agenda_day:
-    st.info("Click a day number to view agenda.")
+    st.info("Click a day number in the calendar to view agenda.")
 else:
-    st.write(f"Selected day: **{agenda_day.isoformat()}**")
+    st.write(f"**{agenda_day.isoformat()}**")
 
     st.markdown("### Events")
     ev = events_for_day(agenda_day)
     if ev.empty:
-        st.info("No events on this day.")
+        st.info("No events.")
     else:
         for _, r in ev.iterrows():
-            eid = safe(r["event_id"]).strip()
-            name = safe(r["event_name"]).strip() or "(No name)"
-            loc = safe(r["location"]).strip()
-            status = safe(r["status"]).strip()
-            dates = f"{safe(r['start_date'])} → {safe(r['end_date'])}"
-            left,right = st.columns([6,1])
-            with left:
-                meta = []
-                if loc: meta.append(loc)
-                if status: meta.append(status)
-                meta.append(dates)
-                st.write(f"**{name}** — " + " | ".join(meta))
-            with right:
-                if st.button("Open", key=f"ag_ev_{agenda_day.isoformat()}_{eid}"):
-                    open_event(eid)
+            if st.button(r["event_name"], key=f"ag_ev_{r['event_id']}"):
+                open_event(r["event_id"])
 
     st.markdown("### Tasks due")
     td = tasks_for_day(agenda_day)
     if td.empty:
-        st.info("No tasks due on this day.")
+        st.info("No tasks.")
     else:
         for _, r in td.iterrows():
-            tid = safe(r["task_id"]).strip()
-            tname = safe(r["task_name"]).strip()
-            scope = safe(r["scope"]).strip()
-            evname = safe(r.get("event_name","")).strip()
-            owner = safe(r["owner"]).strip()
-            status = safe(r["status"]).strip()
-            left,right = st.columns([6,1])
-            with left:
-                meta = []
-                meta.append("General" if scope.lower()=="general" else "Event")
-                if evname and scope.lower()!="general":
-                    meta.append(evname)
-                if owner: meta.append(f"Owner: {owner}")
-                if status: meta.append(status)
-                st.write(f"**{tname}** — " + " | ".join(meta))
-            with right:
-                if st.button("Open", key=f"ag_tk_{agenda_day.isoformat()}_{tid}"):
-                    open_task(tid)
+            if st.button(r["task_name"], key=f"ag_tk_{r['task_id']}"):
+                open_task(r["task_id"])
