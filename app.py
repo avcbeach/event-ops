@@ -132,9 +132,9 @@ def tasks_for_day(d):
     return tasks[tasks["due"] == d].copy()
 
 # --------------------------------------------------
-# DASHBOARD INFO
+# 1) DASHBOARD INFO
 # --------------------------------------------------
-st.subheader("Dashboard")
+st.subheader("1) Dashboard")
 
 ongoing = events[(events["start"].notna()) & (events["end"].notna()) & (events["start"] <= today) & (events["end"] >= today)]
 upcoming_14 = events[(events["start"].notna()) & (events["start"] > today) & (events["start"] <= today + timedelta(days=14))]
@@ -149,9 +149,9 @@ c4.metric("Overdue tasks", len(overdue))
 st.divider()
 
 # --------------------------------------------------
-# CALENDAR (MONTH VIEW)
+# 3) CALENDAR (MONTH VIEW)
 # --------------------------------------------------
-st.subheader("Calendar")
+st.subheader("3) Calendar")
 
 m1,m2 = st.columns([2,2])
 with m1:
@@ -211,9 +211,9 @@ for week in weeks:
 st.divider()
 
 # --------------------------------------------------
-# DAY AGENDA
+# 2) DAY AGENDA
 # --------------------------------------------------
-st.subheader("Day agenda")
+st.subheader("2) Day agenda")
 
 default_agenda = st.session_state.get("agenda_date")
 if isinstance(default_agenda, str):
@@ -259,9 +259,9 @@ else:
 st.divider()
 
 # --------------------------------------------------
-# LEGENDS (AT THE BOTTOM)
+# 4) LEGENDS (AT THE BOTTOM)
 # --------------------------------------------------
-st.subheader("Legends")
+st.subheader("4) Legends")
 
 l1,l2,l3,l4 = st.columns(4)
 l1.markdown("<span class='badge b-ev'>🟦 Event (planned / upcoming)</span>", unsafe_allow_html=True)
