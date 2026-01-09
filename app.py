@@ -1,3 +1,9 @@
+import os
+import streamlit as st
+
+st.write("OWNER:", os.getenv("GITHUB_OWNER"))
+st.write("REPO:", os.getenv("GITHUB_REPO"))
+
 import calendar
 import pandas as pd
 import streamlit as st
