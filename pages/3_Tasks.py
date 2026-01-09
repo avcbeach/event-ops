@@ -26,10 +26,15 @@ def open_event(eid):
     st.session_state["selected_event_id"] = eid
     st.switch_page("pages/2_Event_Detail.py")
 
-def mark_done(task_id):
+def update_task(task_id, updates: dict):
     base = read_csv("data/tasks.csv", TASK_COLS)
-    base.loc[base["task_id"].astype(str) == str(task_id), "status"] = "Done"
-    write_csv("data/tasks.csv", base, f"Mark task {task_id} done")
+    mask = base["task_id"].astype(str) == str(task_id)
+    for k, v in updates.items():
+        base.loc[mask, k] = v
+    write_csv("data/tasks.csv", base, f"Update task {task_id}")
+
+def mark_done(task_id):
+    update_task(task_id, {"status": "Done"})
 
 # --------------------------------------------------
 # PAGE
@@ -80,7 +85,6 @@ if q.strip():
         view["owner"].str.lower().str.contains(qq, na=False)
     ]
 
-# sort
 today = date.today().isoformat()
 view["is_done"] = view["status"] == "Done"
 view = view.sort_values(["is_done","due_date","task_name"])
@@ -124,58 +128,104 @@ else:
                         st.rerun()
 
 # --------------------------------------------------
-# TASK DETAIL POPUP (MODAL)
+# TASK DETAIL POPUP (VIEW + EDIT)
 # --------------------------------------------------
 if st.session_state.get("show_task_popup"):
     task_id = st.session_state.get("popup_task_id")
-
     row = tasks[tasks["task_id"].astype(str) == str(task_id)]
+
     if not row.empty:
         t = row.iloc[0]
 
         @st.dialog("📝 Task details")
         def task_dialog():
-            left, right = st.columns([3,2])
+            st.markdown(f"### {t['task_name']}")
 
-            with left:
-                st.markdown(f"### {t['task_name']}")
-                st.write(f"**Task ID:** {t['task_id']}")
-                st.write(f"**Scope:** {t['scope']}")
-                if t["scope"] == "Event":
-                    st.write(f"**Event:** {t['event_name']}")
-                    if st.button("Open event"):
-                        open_event(t["event_id"])
+            with st.form("edit_task_form"):
+                c1, c2 = st.columns(2)
 
-                st.write(f"**Due date:** {t['due_date']}")
-                st.write(f"**Owner:** {t['owner']}")
-                st.write(f"**Status:** {t['status']}")
+                with c1:
+                    task_name = st.text_input("Task name", value=t["task_name"])
+                    due_date  = st.text_input("Due date (YYYY-MM-DD)", value=str(t["due_date"]))
+                    owner     = st.text_input("Owner", value=str(t["owner"]))
+                    status_in = st.selectbox(
+                        "Status",
+                        TASK_STATUS,
+                        index=TASK_STATUS.index(t["status"]) if t["status"] in TASK_STATUS else 0
+                    )
 
-            with right:
-                st.write(f"**Priority:** {t['priority']}")
-                st.write(f"**Category:** {t['category']}")
-                st.write("**Notes:**")
-                st.write(t["notes"] if str(t["notes"]).strip() else "—")
+                with c2:
+                    scope_in = st.selectbox(
+                        "Scope",
+                        SCOPE,
+                        index=SCOPE.index(t["scope"]) if t["scope"] in SCOPE else 0
+                    )
 
-            st.divider()
+                    event_id = t["event_id"]
+                    if scope_in == "Event":
+                        pick = st.selectbox(
+                            "Event",
+                            [f"{r['event_name']} ({r['event_id']})" for _, r in events.iterrows()],
+                            index=[
+                                f"{r['event_name']} ({r['event_id']})"
+                                for _, r in events.iterrows()
+                            ].index(f"{t['event_name']} ({t['event_id']})")
+                            if t["event_id"] in events["event_id"].values else 0
+                        )
+                        event_id = pick.split("(")[-1].replace(")", "").strip()
+                    else:
+                        event_id = ""
 
-            c1, c2 = st.columns(2)
-            with c1:
-                if t["status"] != "Done":
-                    if st.button("✔ Mark as Done"):
-                        mark_done(t["task_id"])
-                        st.session_state["show_task_popup"] = False
-                        st.success("Task completed.")
-                        st.rerun()
+                priority = st.text_input("Priority", value=str(t["priority"]))
+                category = st.text_input("Category", value=str(t["category"]))
+                notes = st.text_area("Notes", value=str(t["notes"]))
 
-            with c2:
-                if st.button("Close"):
-                    st.session_state["show_task_popup"] = False
-                    st.rerun()
+                st.divider()
+
+                b1, b2, b3 = st.columns(3)
+                with b1:
+                    save = st.form_submit_button("💾 Save changes")
+                with b2:
+                    if t["status"] != "Done":
+                        done = st.form_submit_button("✔ Mark as done")
+                    else:
+                        done = False
+                with b3:
+                    close = st.form_submit_button("Close")
+
+            if save:
+                update_task(
+                    t["task_id"],
+                    {
+                        "task_name": task_name,
+                        "due_date": due_date,
+                        "owner": owner,
+                        "status": status_in,
+                        "scope": scope_in,
+                        "event_id": event_id,
+                        "priority": priority,
+                        "category": category,
+                        "notes": notes,
+                    }
+                )
+                st.session_state["show_task_popup"] = False
+                st.success("Task updated.")
+                st.rerun()
+
+            if done:
+                mark_done(t["task_id"])
+                st.session_state["show_task_popup"] = False
+                st.success("Task completed.")
+                st.rerun()
+
+            if close:
+                st.session_state["show_task_popup"] = False
+                st.rerun()
 
         task_dialog()
 
 # --------------------------------------------------
-# ADD TASK
+# ADD TASK (OPTIONAL)
 # --------------------------------------------------
 st.divider()
 st.subheader("Add new task")
