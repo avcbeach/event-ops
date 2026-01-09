@@ -134,7 +134,7 @@ def tasks_for_day(d):
 # --------------------------------------------------
 # 1) DASHBOARD INFO
 # --------------------------------------------------
-st.subheader("1) Dashboard")
+st.subheader("Dashboard")
 
 ongoing = events[(events["start"].notna()) & (events["end"].notna()) & (events["start"] <= today) & (events["end"] >= today)]
 upcoming_14 = events[(events["start"].notna()) & (events["start"] > today) & (events["start"] <= today + timedelta(days=14))]
@@ -151,7 +151,7 @@ st.divider()
 # --------------------------------------------------
 # 3) CALENDAR (MONTH VIEW)
 # --------------------------------------------------
-st.subheader("3) Calendar")
+st.subheader("Calendar")
 
 m1,m2 = st.columns([2,2])
 with m1:
@@ -213,7 +213,7 @@ st.divider()
 # --------------------------------------------------
 # 2) DAY AGENDA
 # --------------------------------------------------
-st.subheader("2) Day agenda")
+st.subheader("Day agenda")
 
 default_agenda = st.session_state.get("agenda_date")
 if isinstance(default_agenda, str):
@@ -261,7 +261,7 @@ st.divider()
 # --------------------------------------------------
 # 4) LEGENDS (AT THE BOTTOM)
 # --------------------------------------------------
-st.subheader("4) Legends")
+st.subheader("Legends")
 
 l1,l2,l3,l4 = st.columns(4)
 l1.markdown("<span class='badge b-ev'>🟦 Event (planned / upcoming)</span>", unsafe_allow_html=True)
